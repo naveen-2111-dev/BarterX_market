@@ -61,6 +61,7 @@ export async function useContract() {
       console.log(count);
     };
 
+    //typeOfPayment = boolean
     const PlaceOrder = async (id, typeofPayment) => {
       const contract = await Instance();
       const res = await contract.buyProduct(id, typeofPayment, {
