@@ -2,6 +2,8 @@ import NftContract_config from "@/contract/Nftname_transfer.json";
 import Marketplace_config from "@/contract/Market_place.json";
 import Erc_config from "@/contract/Erc20.json";
 import { ethers } from "ethers";
+import { approveToken } from "./approval";
+import { erc721Abi } from "viem";
 
 export async function useContract() {
   try {
@@ -16,128 +18,107 @@ export async function useContract() {
       throw new Error("Signer not found! Please connect your wallet.");
     }
 
-    const validateAddress = (address, name) => {
-      if (!address) {
-        throw new Error(`${name} contract address is undefined`);
-      }
-      if (!ethers.isAddress(address)) {
-        throw new Error(`Invalid ${name} contract address: ${address}`);
-      }
-      return address;
-    };
-
-    const nftAddress = validateAddress(NftContract_config.address, "NFT");
-    const ercAddress = validateAddress(Erc_config.address, "ERC20");
-    const marketplaceAddress = validateAddress(
-      Marketplace_config.address,
-      "Marketplace"
+    const Nft = new ethers.Contract(
+      NftContract_config.address,
+      NftContract_config.abi,
+      signer
     );
-
-    const Nft = new ethers.Contract(nftAddress, NftContract_config.abi, signer);
-    const BRTX = new ethers.Contract(ercAddress, Erc_config.abi, signer);
+    const BRTX = new ethers.Contract(
+      Erc_config.address,
+      Erc_config.abi,
+      signer
+    );
     const Marketplace = new ethers.Contract(
-      marketplaceAddress,
+      Marketplace_config.address,
       Marketplace_config.abi,
       signer
     );
 
-    const NameTransfer = async (contractAddress, tokenId) => {
+    const PlaceOrder = async (productId, isPrepaid) => {
       try {
-        const tx = await Nft.NameTransfer(contractAddress, tokenId, {
-          gasLimit: 300000,
-        });
-        const receipt = await tx.wait();
-        console.log("NFT Transfer successful!", receipt);
-        return receipt;
+        const marketPlaceContract = new ethers.Contract(
+          Marketplace_config.address,
+          Marketplace_config.abi,
+          signer
+        );
+
+        const storeData = await marketPlaceContract.store(productId);
+
+        if (isPrepaid) {
+          await approveToken(
+            signer,
+            Marketplace_config.address,
+            storeData.price
+          );
+        }
+
+        const tx = await marketPlaceContract.buyProduct(productId, isPrepaid);
+        await tx.wait();
+
+        return true;
       } catch (error) {
-        console.error("NFT Transfer failed:", error);
-        throw new Error(`NFT Transfer failed: ${error.message}`);
+        console.error("Purchase failed:", error.message);
+        throw error;
       }
     };
 
     const GetProducts = async () => {
-      try {
-        console.log("Fetching products...");
-        const count = await Marketplace.ProductCount();
-        console.log(`Found ${count} products`);
+      const productCount = await Marketplace.productCount();
+      const products = [];
 
-        const products = [];
-        for (let i = 0; i < count; i++) {
-          const product = await Marketplace.store(i);
-          products.push({
-            id: i,
-            price: product.price.toString(),
-            stock: product.stock.toString(),
-            name: product.name,
-            description: product.description,
-            image: product.image,
-            productType: product.productType,
-            condition: product.condition,
-            seller: product.seller,
-          });
-        }
-        console.log("Products fetched successfully:", products);
-        return products;
-      } catch (error) {
-        console.error("Failed to fetch products:", error);
-        throw new Error(`Failed to fetch products: ${error.message}`);
+      for (let i = 1; i < productCount; i++) {
+        const productData = await Marketplace.store(i);
+        products.push(productData);
       }
+
+      console.log(products);
+      return products;
     };
 
-    const PlaceOrder = async (id, isPrepaid) => {
+    const NameTransfer = async (
+      nftContractAddress,
+      tokenId,
+      brtxAmount = "1"
+    ) => {
       try {
-        console.log(`Placing order for product ${id}, prepaid: ${isPrepaid}`);
+        const nftContract = new ethers.Contract(
+          nftContractAddress,
+          erc721Abi,
+          signer
+        );
 
-        const productData = await Marketplace.store(id);
-        if (!productData || productData.price === undefined) {
-          throw new Error(`Product ${id} not found or invalid`);
+        const owner = await nftContract.ownerOf(tokenId);
+        if (owner.toLowerCase() !== signer.address.toLowerCase()) {
+          throw new Error("You don't own this NFT");
         }
 
-        const productPrice = productData.price;
-
-        if (isPrepaid) {
-          const userAddress = await signer.getAddress();
-          const currentAllowance = await BRTX.allowance(
-            userAddress,
-            marketplaceAddress
+        const approvedAddress = await nftContract.getApproved(tokenId);
+        const nftManagerAddress = NftContract_config.address;
+        if (
+          approvedAddress?.toLowerCase() !== nftManagerAddress.toLowerCase()
+        ) {
+          console.log("Approving NFT transfer...");
+          const approvalTx = await nftContract.approve(
+            nftManagerAddress,
+            tokenId
           );
-
-          if (currentAllowance < productPrice) {
-            console.log("Approving ERC20 tokens...");
-            const approveTx = await BRTX.approve(
-              marketplaceAddress,
-              productPrice
-            );
-            await approveTx.wait();
-            console.log("Approval successful");
-          }
+          await approvalTx.wait();
+          console.log("NFT Approval confirmed");
         }
 
-        console.log("Executing purchase...");
-        const tx = await Marketplace.buyProduct(id, isPrepaid, {
-          gasLimit: 500000,
-        });
+        console.log("Depositing NFT...");
+        const depositTx = await Nft.depositNFT(
+          nftContractAddress,
+          tokenId,
+          ethers.parseEther(brtxAmount)
+        );
+        await depositTx.wait();
 
-        const receipt = await tx.wait();
-        console.log("Order placed successfully!", receipt);
-
-        return {
-          success: true,
-          transactionHash: receipt.hash,
-          productId: id,
-          amount: productPrice.toString(),
-        };
+        console.log("NFT deposited and BRTX minted!");
+        return true;
       } catch (error) {
-        console.error("Failed to place order:", error);
-
-        let errorMessage = error.message;
-        if (error.info && error.info.error) {
-          errorMessage += ` (${error.info.error.message})`;
-        } else if (error.reason) {
-          errorMessage += ` (${error.reason})`;
-        }
-
-        throw new Error(`Order failed: ${errorMessage}`);
+        console.error("Transfer failed:", error);
+        throw error;
       }
     };
 

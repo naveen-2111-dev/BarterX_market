@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useContract } from "@/hooks/useContract";
+import { ethers } from "ethers";
 
 export default function Home() {
   const [contract, setContract] = useState(null);
@@ -63,7 +64,7 @@ export default function Home() {
             onClick={async () => {
               if (!contract) return;
               try {
-                await contract.PlaceOrder(0, true);
+                await contract.PlaceOrder(0, true, ethers.parseEther("1"));
               } catch (error) {
                 console.error("Error placing order:", error);
                 setError(error.message);
@@ -80,8 +81,8 @@ export default function Home() {
               if (!contract) return;
               try {
                 await contract.NameTransfer(
-                  "0x6031c451Eb796FcD742Dbe6ca344B7d8551928aD",
-                  9
+                  "0x8dfd5864cb659d9878e4f64aba15e6715fcc0922",
+                  4
                 );
               } catch (error) {
                 console.error("Error transferring NFT:", error);
