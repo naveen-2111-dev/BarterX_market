@@ -80,11 +80,10 @@ export default function Home() {
             onClick={async () => {
               if (!contract) return;
               try {
-                await contract
-                  .NameTransfer
-                  // "0x6031c451eb796fcd742dbe6ca344b7d8551928ad",
-                  // 8  load the actual data
-                  ();
+                await contract.NameTransfer(
+                  "0x6031c451eb796fcd742dbe6ca344b7d8551928ad",
+                  8
+                );
               } catch (error) {
                 console.error("Error transferring NFT:", error);
                 setError(error.message);
