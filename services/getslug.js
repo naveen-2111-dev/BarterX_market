@@ -37,20 +37,26 @@ export default async function GetSlug(walletId) {
 
         if (collectionRes.data?.data) {
           const collectionData = collectionRes.data.data;
-          const { nftMetadata, ownerNFTs, listedNFTs } = await fetchNFTMetadata(collectionData, walletId);
-          
+          const { nftMetadata, ownerNFTs, listedNFTs } = await fetchNFTMetadata(
+            collectionData,
+            walletId
+          );
+
           collections.push({
             slug,
             data: {
               ...collectionData,
               nftMetadata,
               ownerNFTs,
-              listedNFTs
+              listedNFTs,
             },
           });
         }
       } catch (error) {
-        console.error(`Error fetching collection for slug ${slug}:`, error.message);
+        console.error(
+          `Error fetching collection for slug ${slug}:`,
+          error.message
+        );
         collections.push({
           slug,
           error: error.message,
@@ -63,18 +69,26 @@ export default async function GetSlug(walletId) {
       collections,
     };
   } catch (error) {
-    console.error("Error fetching slug:", error.response?.data || error.message);
+    console.error(
+      "Error fetching slug:",
+      error.response?.data || error.message
+    );
     return null;
   }
 }
 
 async function fetchNFTMetadata(collectionData, walletId) {
   try {
-    const contractAddress = collectionData.listings?.[0]?.protocol_data?.parameters?.offer?.[0]?.token;
-    
+    const contractAddress =
+      collectionData.listings?.[0]?.protocol_data?.parameters?.offer?.[0]
+        ?.token;
+
     if (!contractAddress) {
-      console.error("No contract address found in collection data");
-      return { nftMetadata: null, ownerNFTs: null, listedNFTs: null };
+      return {
+        nftMetadata: [],
+        ownerNFTs: [],
+        listedNFTs: [],
+      };
     }
 
     const allNFTsUrl = `https://testnets-api.opensea.io/api/v2/chain/sepolia/contract/${contractAddress}/nfts`;
@@ -82,18 +96,30 @@ async function fetchNFTMetadata(collectionData, walletId) {
     const allNFTs = allNFTsResponse.data.nfts || [];
 
     const ownerNFTs = await fetchOwnedNFTs(contractAddress, walletId);
-
-    const listedNFTs = await fetchListedNFTs(collectionData, walletId);
+    const listedNFTs = await fetchListedNFTs(
+      collectionData,
+      walletId,
+      contractAddress
+    );
 
     return {
       nftMetadata: allNFTs,
-      ownerNFTs,
-      listedNFTs
+      ownerNFTs: ownerNFTs.map((nft) => ({
+        ...nft,
+        uniqueKey: `${contractAddress}-${nft.identifier}-owned`,
+      })),
+      listedNFTs: listedNFTs.map((nft) => ({
+        ...nft,
+        uniqueKey: `${contractAddress}-${nft.identifier}-listed-${nft.order_hash}`,
+      })),
     };
   } catch (error) {
-    console.error("Error fetching NFTs:", error.response?.data || error.message);
-    return { nftMetadata: null, ownerNFTs: null, listedNFTs: null };
-  } 
+    console.error(
+      "Error fetching NFTs:",
+      error.response?.data || error.message
+    );
+    return { nftMetadata: [], ownerNFTs: [], listedNFTs: [] };
+  }
 }
 
 async function fetchOwnedNFTs(contractAddress, walletAddress) {
@@ -107,37 +133,46 @@ async function fetchOwnedNFTs(contractAddress, walletAddress) {
   }
 }
 
-async function fetchListedNFTs(collectionData, walletAddress) {
+async function fetchListedNFTs(collectionData, walletAddress, contractAddress) {
   try {
     const listings = collectionData.listings || [];
-    const ownerListings = listings.filter(listing => 
-      listing.protocol_data?.parameters?.offerer?.toLowerCase() === walletAddress.toLowerCase()
+
+    const ownerListings = listings.filter(
+      (listing) =>
+        listing.protocol_data?.parameters?.offerer?.toLowerCase() ===
+        walletAddress.toLowerCase()
     );
 
-    const contractAddress = collectionData.listings?.[0]?.protocol_data?.parameters?.offer?.[0]?.token;
+    if (ownerListings.length === 0) {
+      return [];
+    }
 
     const nftsUrl = `https://testnets-api.opensea.io/api/v2/chain/sepolia/contract/${contractAddress}/nfts`;
     const nftsResponse = await axios.get(nftsUrl);
     const allNFTs = nftsResponse.data.nfts || [];
 
-    const listedNFTs = ownerListings.map(listing => {
+    const nftMap = {};
+    allNFTs.forEach((nft) => {
+      nftMap[nft.identifier] = nft;
+    });
+
+    return ownerListings.map((listing) => {
       const offer = listing.protocol_data?.parameters?.offer?.[0];
       const tokenId = offer?.identifierOrCriteria;
-      
-      const nftMetadata = allNFTs.find(nft => nft.identifier === tokenId);
+      const nftMetadata = nftMap[tokenId] || {};
 
       return {
         identifier: tokenId,
         name: nftMetadata?.name || "Unknown",
         description: nftMetadata?.description || "",
         image_url: nftMetadata?.image_url || "",
-        price: listing.price?.current?.value,
-        currency: listing.price?.current?.currency,
-        order_hash: listing.order_hash
+        price:
+          listing.protocol_data?.parameters?.consideration?.[0]?.startAmount,
+        currency: listing.protocol_data?.parameters?.consideration?.[0]?.token,
+        order_hash: listing.order_hash,
+        contract_address: contractAddress,
       };
     });
-
-    return listedNFTs;
   } catch (error) {
     console.error("Error fetching listed NFTs:", error.message);
     return [];
