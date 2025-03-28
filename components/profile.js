@@ -15,6 +15,46 @@ import {
 import SetSlug from "@/services/saveSlug";
 import GetSlug from "@/services/getslug";
 
+// Skeleton Loader Component
+const ProfileSkeleton = () => (
+  <div className="min-h-screen bg-black text-white relative">
+    <div className="relative h-80 bg-gradient-to-br from-black to-[#151515] rounded-b-3xl">
+      <div className="absolute -bottom-20 left-6 flex items-end">
+        <div className="w-28 h-28 bg-[#252525] rounded-full border-4 border-black animate-pulse" />
+        <div className="ml-6 mb-1 space-y-4">
+          <div className="h-8 w-48 bg-[#252525] rounded animate-pulse" />
+          <div className="flex gap-3">
+            <div className="h-8 w-32 bg-[#252525] rounded-full animate-pulse" />
+            <div className="h-8 w-24 bg-[#252525] rounded-full animate-pulse" />
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="max-w-7xl mx-auto px-6 pt-28 pb-16">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+        {[...Array(8)].map((_, i) => (
+          <div
+            key={i}
+            className="bg-[#1a1a1a] rounded-xl overflow-hidden border border-[#404040] animate-pulse"
+          >
+            <div className="w-full aspect-square bg-[#252525]" />
+            <div className="p-4 space-y-3">
+              <div className="h-4 w-3/4 rounded bg-[#252525]" />
+              <div className="flex justify-between items-center">
+                <div className="space-y-2">
+                  <div className="h-3 w-12 rounded bg-[#252525]" />
+                  <div className="h-4 w-16 rounded bg-[#252525]" />
+                </div>
+                <div className="h-8 w-20 rounded bg-[#252525]" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 export default function ProfilePage() {
   const { address, isConnected } = useAccount();
   const { data: ensName } = useEnsName({ address });
@@ -24,8 +64,9 @@ export default function ProfilePage() {
   const [slugPopup, setSlugPopup] = useState(false);
   const [slug, setSlug] = useState("");
   const [copied, setCopied] = useState(false);
-  const [loading, setloading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [nfts, setNfts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const menuRef = useRef(null);
   const popupRef = useRef(null);
 
@@ -47,15 +88,38 @@ export default function ProfilePage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [slugPopup]);
 
+  useEffect(() => {
+    async function fetchSlug() {
+      if (!address) {
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const slugData = await GetSlug(address);
+        if (slugData && slugData.collections?.[0]?.data?.ownerNFTs) {
+          setNfts(slugData.collections[0].data.ownerNFTs);
+        }
+      } catch (error) {
+        console.error("Fetch error:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchSlug();
+  }, [address]);
+
   const isValidSlug = (slug) => {
     return /^(?!-)(?!.*--)[a-z0-9-]+(?<!-)$/.test(slug);
   };
 
   const handleSaveSlug = async () => {
-    setloading(true);
+    setLoading(true);
     if (!slug.trim()) {
       alert("Please enter a valid slug");
-      setloading(false);
+      setLoading(false);
       return;
     }
 
@@ -63,53 +127,25 @@ export default function ProfilePage() {
       alert(
         "Slug can only contain lowercase letters, numbers, and single hyphens (no leading, trailing, or consecutive hyphens)"
       );
-      setloading(false);
+      setLoading(false);
       return;
     }
 
-    alert(`Slug saved: ${slug}`);
-
     try {
       const res = await SetSlug(address, slug);
-
       if (!res) {
         console.log("Failed to save slug");
         return;
       }
-
       console.log(res);
-      setloading(false);
     } catch (error) {
       console.log(error);
     } finally {
-      setloading(false);
+      setLoading(false);
+      setSlug("");
+      setSlugPopup(false);
     }
-
-    setSlug("");
-    setSlugPopup(false);
   };
-
-  useEffect(() => {
-    async function fetchSlug() {
-      if (!address) {
-        console.log("No address available");
-        return;
-      }
-
-      try {
-        const slugData = await GetSlug(address);
-        if (slugData) {
-          console.log("Fetched slug:", slugData);
-        } else {
-          console.log("No slug data found");
-        }
-      } catch (error) {
-        console.error("Fetch error:", error);
-      }
-    }
-
-    fetchSlug();
-  }, [address]);
 
   const copyAddress = () => {
     navigator.clipboard.writeText(address);
@@ -124,6 +160,10 @@ export default function ProfilePage() {
         <ConnectButton />
       </div>
     );
+  }
+
+  if (isLoading) {
+    return <ProfileSkeleton />;
   }
 
   return (
@@ -198,7 +238,7 @@ export default function ProfilePage() {
                 {address?.slice(0, 6)}...{address?.slice(-4)}
               </span>
               <span className="text-sm bg-[#b2ff00]/10 text-[#b2ff00] px-3 py-1.5 rounded-full border border-[#b2ff00]/20">
-                12 NFTs
+                {nfts.length} NFTs
               </span>
             </div>
           </div>
@@ -207,46 +247,53 @@ export default function ProfilePage() {
 
       <div className="max-w-7xl mx-auto px-6 pt-28 pb-16">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-          {[...Array(8)].map((_, index) => (
-            <div
-              key={index}
-              className="bg-[#1a1a1a] rounded-xl overflow-hidden border border-[#404040] hover:border-[#b2ff00]/50 transition-all hover:shadow-[0_0_15px_-5px_#b2ff00] group"
-            >
-              <div className="w-full aspect-square bg-gradient-to-br from-[#1a1a1a] to-black relative">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-24 h-24 rounded-full bg-[#b2ff00]/10 border border-[#b2ff00]/30 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <span className="text-[#b2ff00] text-xs">
-                      NFT #{index + 1}
-                    </span>
-                  </div>
+          {nfts.map((nft, index) => {
+            const isListed = nft.identifier === '15';
+            return (
+              <div
+                key={index}
+                className={`bg-[#1a1a1a] rounded-xl overflow-hidden border ${
+                  isListed 
+                    ? 'border-[#b2ff00] shadow-[0_0_15px_-5px_#b2ff00]' 
+                    : 'border-[#404040]'
+                } hover:border-[#b2ff00]/50 transition-all group`}
+              >
+                <div className="w-full aspect-square bg-gradient-to-br from-[#1a1a1a] to-black relative">
+                  <Image
+                    src={nft.image_url}
+                    alt={nft.name}
+                    width={300}
+                    height={300}
+                    className="w-full h-full object-cover"
+                  />
+                  {isListed && (
+                    <div className="absolute top-2 right-2 bg-[#b2ff00] text-black text-xs font-bold px-2 py-1 rounded">
+                      Listed
+                    </div>
+                  )}
                 </div>
-                <div className="absolute bottom-3 right-3 bg-black/80 rounded-full p-1 border border-[#404040] group-hover:border-[#b2ff00] transition-colors">
-                  <div className="w-7 h-7 rounded-full bg-[#b2ff00] flex items-center justify-center">
-                    <span className="text-black text-xs font-bold">
-                      {address?.slice(2, 4).toUpperCase() || "DR"}
-                    </span>
-                  </div>
-                </div>
-              </div>
 
-              <div className="p-4">
-                <h3 className="font-medium group-hover:text-[#b2ff00] transition-colors">
-                  DapRader #{index + 1}
-                </h3>
-                <div className="flex justify-between items-center mt-3">
-                  <div>
-                    <p className="text-xs text-gray-400">Price</p>
-                    <span className="text-[#b2ff00] text-sm font-mono">
-                      0.2 ETH
-                    </span>
+                <div className="p-4">
+                  <h3 className="font-medium group-hover:text-[#b2ff00] transition-colors">
+                    {nft.name}
+                  </h3>
+                  <div className="flex justify-between items-center mt-3">
+                    <div>
+                      <p className="text-xs text-gray-400">Price</p>
+                      <span className="text-[#b2ff00] text-sm font-mono">
+                        {isListed 
+                          ? `${(Number(nft.price) / 1e18).toFixed(2)} ETH` 
+                          : 'Not Listed'}
+                      </span>
+                    </div>
+                    <button className="text-xs bg-[#b2ff00]/10 text-[#b2ff00] px-3 py-1.5 rounded-lg border border-[#b2ff00]/30 hover:bg-[#b2ff00]/20 transition-colors flex items-center gap-1">
+                      <ExternalLink size={14} /> View
+                    </button>
                   </div>
-                  <button className="text-xs bg-[#b2ff00]/10 text-[#b2ff00] px-3 py-1.5 rounded-lg border border-[#b2ff00]/30 hover:bg-[#b2ff00]/20 transition-colors flex items-center gap-1">
-                    <ExternalLink size={14} /> View
-                  </button>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 

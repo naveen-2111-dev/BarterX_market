@@ -17,6 +17,7 @@
     "ethereum-blockies": "^0.1.1",
     "ethers": "^6.13.5",
     "jotai": "^2.12.2",
+    "lucide-react": "^0.484.0",
     "mongodb": "^6.15.0",
     "next": "15.2.3",
     "react": "^19.0.0",
