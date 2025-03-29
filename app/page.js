@@ -1,47 +1,77 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useContract } from "@/hooks/useContract";
 import { ethers } from "ethers";
+import marketplaceABI from "@/contract/Market_place.json";
+import {
+  ShoppingBag,
+  Truck,
+  CheckCircle2,
+  DollarSign,
+  AlertCircle,
+  RefreshCw,
+} from "lucide-react";
 
-export default function Home() {
+export default function Marketplace() {
   const [contract, setContract] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [products, setProducts] = useState([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("");
-  const [products, setProducts] = useState([]);
+  const [account, setAccount] = useState("");
 
   const initializeContract = async () => {
-    setLoading(true);
-    setError(null);
     try {
-      const contractFunctions = await useContract();
-      setContract(contractFunctions);
+      setLoading(true);
+      setError(null);
 
-      // Fetch products from contract
-      if (contractFunctions && contractFunctions.GetProducts) {
-        const productCount = await contractFunctions.GetProducts();
-        const loadedProducts = [];
+      if (!window.ethereum) {
+        throw new Error("Please install MetaMask");
+      }
 
-        // Temporary placeholder - replace with actual contract data fetching
-        for (let i = 0; i < Math.min(productCount, 5); i++) {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contractAddress = marketplaceABI.address;
+
+      const marketplaceContract = new ethers.Contract(
+        contractAddress,
+        marketplaceABI.abi,
+        signer
+      );
+
+      const accounts = await provider.send("eth_requestAccounts", []);
+      setAccount(accounts[0]);
+
+      setContract(marketplaceContract);
+
+      const productCount = await marketplaceContract.productCount();
+      console.log("Total products:", Number(productCount));
+
+      const loadedProducts = [];
+      for (let i = 1; i <= Number(productCount); i++) {
+        try {
+          const product = await marketplaceContract.store(i);
+
           loadedProducts.push({
             id: i,
-            name: "Loading product...",
-            price: 0.1,
-            stock: 10,
-            description: "Product description loading...",
-            image: "/placeholder-product.jpg",
-            productType: "Electronics",
-            condition: "New",
+            price: ethers.formatUnits(product.price, 18),
+            stock: Number(product.stock),
+            name: ethers.decodeBytes32String(product.name),
+            description: ethers.toUtf8String(product.description),
+            image: product.image,
+            productType: ethers.decodeBytes32String(product.productType),
+            condition: ethers.decodeBytes32String(product.condition),
+            seller: product.seller,
           });
+        } catch (err) {
+          console.error(`Error loading product ${i}:`, err);
         }
-
-        setProducts(loadedProducts);
       }
+
+      setProducts(loadedProducts);
     } catch (err) {
-      console.error("Contract initialization error:", err);
+      console.error("Initialization error:", err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -55,94 +85,135 @@ export default function Home() {
     }
 
     try {
+      setLoading(true);
       const isPayNow = paymentMethod === "paynow";
       const product = products.find((p) => p.id === productId);
 
-      await contract.PlaceOrder(
-        productId,
-        isPayNow,
-        ethers.parseEther(product.price.toString())
-      );
+      const priceInWei = ethers.parseUnits(product.price, 18);
 
+      const tx = await contract.buyProduct(productId, isPayNow, {
+        value: isPayNow ? priceInWei : 0,
+      });
+
+      await tx.wait();
       setShowPaymentModal(false);
       alert(
         `Order placed successfully! Payment: ${
           isPayNow ? "Paid" : "On Delivery"
         }`
       );
+
+      initializeContract();
     } catch (error) {
       console.error("Error placing order:", error);
-      setError(error.message);
+      setError(error.message || "Failed to place order");
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (window.ethereum?.isConnected()) {
+    if (window.ethereum) {
       initializeContract();
+
+      window.ethereum.on("accountsChanged", (accounts) => {
+        setAccount(accounts[0] || "");
+        initializeContract();
+      });
+
+      window.ethereum.on("chainChanged", () => {
+        window.location.reload();
+      });
+
+      return () => {
+        window.ethereum.removeListener("accountsChanged", () => {});
+        window.ethereum.removeListener("chainChanged", () => {});
+      };
     }
   }, []);
 
-  const ProductCard = ({ product }) => (
-    <div className="bg-gray-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all h-full flex flex-col">
-      <div className="h-48 bg-gray-700 overflow-hidden">
-        <img
-          src={product.image}
-          alt={product.name}
-          className="w-full h-full object-cover"
-          onError={(e) => (e.target.src = "/placeholder-product.jpg")}
-        />
-      </div>
-      <div className="p-4 flex-grow flex flex-col">
-        <h2 className="text-xl font-semibold mb-2">{product.name}</h2>
-        <p className="text-gray-400 text-sm mb-3 flex-grow">
-          {product.description}
-        </p>
+  const bytesToImageUrl = (bytes) => {
+    try {
+      // Handle empty or undefined bytes
+      if (!bytes || bytes.length === 0) {
+        return "/placeholder-product.png";
+      }
 
-        <div className="grid grid-cols-2 gap-2 text-sm mb-4">
-          <div>
-            <span className="text-gray-400">Price:</span>
-            <span className="text-emerald-400 ml-1">
-              {ethers.formatEther(product.price)} ETH
-            </span>
-          </div>
-          <div>
-            <span className="text-gray-400">Stock:</span>
-            <span className="ml-1">{product.stock}</span>
-          </div>
-          <div>
-            <span className="text-gray-400">Type:</span>
-            <span className="ml-1">{product.productType}</span>
-          </div>
-          <div>
-            <span className="text-gray-400">Condition:</span>
-            <span className="ml-1">{product.condition}</span>
-          </div>
-        </div>
+      const hexString = ethers.hexlify(bytes);
 
-        <button
-          onClick={() => {
-            setSelectedProduct(product.id);
-            setShowPaymentModal(true);
-          }}
-          className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg font-medium transition-colors mt-auto"
-          disabled={loading}
-        >
-          {loading ? "Loading..." : "Place Order"}
-        </button>
-      </div>
-    </div>
-  );
+      // 1. Check for common image magic numbers (first few bytes)
+      const imageHeaders = {
+        "0x89504e47": "data:image/png;base64,", // PNG
+        "0xffd8ffe0": "data:image/jpeg;base64,", // JPEG
+        "0xffd8ffe1": "data:image/jpeg;base64,", // JPEG
+        "0x47494638": "data:image/gif;base64,", // GIF
+        "0x52494646": "data:image/webp;base64,", // WEBP
+      };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-900 to-gray-800 text-white p-8">
-      {error && (
-        <div className="text-red-300 p-4 bg-red-900/50 rounded-lg mb-8">
-          Error: {error}
-        </div>
-      )}
+      for (const [header, prefix] of Object.entries(imageHeaders)) {
+        if (hexString.startsWith(header)) {
+          const base64Data = ethers.toBase64(bytes);
+          return `${prefix}${base64Data}`;
+        }
+      }
 
-      <div className="max-w-7xl mx-auto">
-        {loading ? (
+      if (hexString.startsWith("0x64617461")) {
+        const base64Data = hexString.slice(10);
+        if (/^[a-zA-Z0-9+/]+={0,2}$/.test(base64Data)) {
+          return `data:image/png;base64,${base64Data}`;
+        }
+      }
+
+      const potentialCid = hexString.slice(2);
+
+      const ipfsGateways = [
+        `https://ipfs.io/ipfs/${potentialCid}`,
+        `https://cloudflare-ipfs.com/ipfs/${potentialCid}`,
+        `https://dweb.link/ipfs/${potentialCid}`,
+        `https://gateway.pinata.cloud/ipfs/${potentialCid}`,
+      ];
+
+      return ipfsGateways[0];
+    } catch (e) {
+      console.error("Image conversion error:", e);
+      return "/image.png";
+    }
+  };
+
+  const formatAddress = (address) => {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
+
+  const StatusBadge = ({ status }) => {
+    const statusConfig = {
+      Delivered: {
+        icon: <CheckCircle2 className="mr-1" />,
+        color: "bg-green-100 text-green-800",
+      },
+      Paid: {
+        icon: <DollarSign className="mr-1" />,
+        color: "bg-blue-100 text-blue-800",
+      },
+      Pending: {
+        icon: <AlertCircle className="mr-1" />,
+        color: "bg-yellow-100 text-yellow-800",
+      },
+    };
+
+    return (
+      <span
+        className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${statusConfig[status].color}`}
+      >
+        {statusConfig[status].icon}
+        {status}
+      </span>
+    );
+  };
+
+  if (loading && products.length === 0) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white p-8">
+        <div className="max-w-7xl mx-auto">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {[...Array(4)].map((_, i) => (
               <div
@@ -159,23 +230,111 @@ export default function Home() {
               </div>
             ))}
           </div>
-        ) : (
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-900 text-white p-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="bg-red-900/50 p-4 rounded-lg mb-8">
+            <div className="flex items-center">
+              <AlertCircle className="mr-2" />
+              <span>Error: {error}</span>
+            </div>
+            <button
+              onClick={initializeContract}
+              className="mt-3 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-900 text-white p-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-3xl font-bold flex items-center">
+            <ShoppingBag className="mr-3" />
+            BarterX Marketplace
+          </h1>
+          {account && (
+            <div className="bg-gray-800 px-4 py-2 rounded-lg">
+              Connected: {formatAddress(account)}
+            </div>
+          )}
+        </div>
+
+        {products.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {products.length > 0 ? (
-              products.map((product) => (
-                <ProductCard key={product.id} product={product} />
-              ))
-            ) : (
-              <div className="col-span-full text-center py-12">
-                <div className="text-gray-400 mb-4">No products available</div>
-                <button
-                  onClick={initializeContract}
-                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg"
-                >
-                  Refresh Products
-                </button>
+            {products.map((product) => (
+              <div
+                key={product.id}
+                className="bg-gray-800 rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all h-full flex flex-col"
+              >
+                <div className="h-48 bg-gray-700 overflow-hidden">
+                  <img
+                    src={bytesToImageUrl(product.image)}
+                    alt={product.name}
+                    className="w-full h-full object-cover"
+                    onError={(e) => (e.target.src = "/image.png")}
+                  />
+                </div>
+                <div className="p-4 flex-grow flex flex-col">
+                  <h2 className="text-xl font-semibold mb-2">{product.name}</h2>
+                  <p className="text-gray-400 text-sm mb-3 flex-grow">
+                    {product.description}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 text-sm mb-4">
+                    <div>
+                      <span className="text-gray-400">Price:</span>
+                      <span className="text-emerald-400 ml-1">
+                        {product.price} BRTX
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Stock:</span>
+                      <span className="ml-1">{product.stock}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Type:</span>
+                      <span className="ml-1">{product.productType}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Condition:</span>
+                      <span className="ml-1">{product.condition}</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedProduct(product.id);
+                      setShowPaymentModal(true);
+                    }}
+                    className="w-full py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg font-medium transition-colors mt-auto"
+                    disabled={product.stock <= 0}
+                  >
+                    {product.stock <= 0 ? "Out of Stock" : "Buy Now"}
+                  </button>
+                </div>
               </div>
-            )}
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="text-gray-400 mb-4">No products available</div>
+            <button
+              onClick={initializeContract}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg flex items-center mx-auto"
+            >
+              <RefreshCw className="mr-2" />
+              Refresh Products
+            </button>
           </div>
         )}
       </div>
@@ -186,7 +345,6 @@ export default function Home() {
             <h2 className="text-xl font-semibold mb-4">
               Select Payment Method
             </h2>
-
             <div className="space-y-3 mb-6">
               <div
                 className={`p-4 border rounded-lg cursor-pointer transition-colors ${
@@ -198,18 +356,7 @@ export default function Home() {
               >
                 <div className="flex items-center">
                   <div className="w-8 h-8 rounded-full bg-emerald-400 flex items-center justify-center mr-3">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5 text-gray-900"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fillRule="evenodd"
-                        d="M4 4a2 2 0 00-2 2v4a2 2 0 002 2V6h10a2 2 0 00-2-2H4zm2 6a2 2 0 012-2h8a2 2 0 012 2v4a2 2 0 01-2 2H8a2 2 0 01-2-2v-4zm6 4a2 2 0 100-4 2 2 0 000 4z"
-                        clipRule="evenodd"
-                      />
-                    </svg>
+                    <DollarSign className="text-gray-900" />
                   </div>
                   <div>
                     <h3 className="font-medium">Pay Now</h3>
@@ -219,7 +366,6 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-
               <div
                 className={`p-4 border rounded-lg cursor-pointer transition-colors ${
                   paymentMethod === "delivery"
@@ -230,15 +376,7 @@ export default function Home() {
               >
                 <div className="flex items-center">
                   <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center mr-3">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path d="M8 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0zM15 16.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z" />
-                      <path d="M3 4a1 1 0 00-1 1v10a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H10a1 1 0 001-1v-1a1 1 0 011-1h2a1 1 0 011 1v1a1 1 0 001 1h1.05a2.5 2.5 0 014.9 0H19a1 1 0 001-1V5a1 1 0 00-1-1H3zM3 5h2v2h2.25a.75.75 0 01.75.75v6.5a.75.75 0 01-.75.75H5v2h10v-2h-2.25a.75.75 0 01-.75-.75v-6.5a.75.75 0 01.75-.75H15V5h2v2h2V5H3z" />
-                    </svg>
+                    <Truck className="text-white" />
                   </div>
                   <div>
                     <h3 className="font-medium">Pay on Delivery</h3>
@@ -249,7 +387,6 @@ export default function Home() {
                 </div>
               </div>
             </div>
-
             <div className="flex justify-end space-x-3">
               <button
                 onClick={() => setShowPaymentModal(false)}
@@ -259,14 +396,14 @@ export default function Home() {
               </button>
               <button
                 onClick={() => handlePlaceOrder(selectedProduct)}
-                disabled={!paymentMethod}
+                disabled={!paymentMethod || loading}
                 className={`px-4 py-2 rounded-lg transition-colors ${
                   paymentMethod
                     ? "bg-emerald-500 hover:bg-emerald-600"
                     : "bg-gray-600 cursor-not-allowed"
                 }`}
               >
-                Confirm Order
+                {loading ? "Processing..." : "Confirm Order"}
               </button>
             </div>
           </div>
